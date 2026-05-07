@@ -2,7 +2,9 @@ const z32 = require('z32')
 
 const events = []
 let _repl = null
+let _replReady = null
 const _pending = new Map()
+const _resumes = []
 
 function bugbear(scope, context) {
   function store(level, data, captureStack) {
@@ -45,20 +47,99 @@ bugbear.repl = function (name, value) {
   if (_repl) {
     _repl.context[name] = value
   } else {
-    _startRepl()
+    _startRepl().catch(() => {})
   }
 }
 
+bugbear.sleep = function (ms) {
+  return new Promise((resolve) => {
+    let timer = null
+    const done = () => {
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+      _removeResume(done)
+      resolve()
+    }
+    _addResume(done)
+    if (ms !== undefined) timer = setTimeout(done, ms)
+  })
+}
+
+bugbear.breakpoint = function (name, value) {
+  let exposeKey = null
+  let exposeVal = undefined
+  let shouldOpen = false
+
+  if (arguments.length === 0) {
+    // pause only
+  } else if (typeof name === 'string') {
+    exposeKey = name
+    exposeVal = value
+  } else {
+    exposeKey = 'it'
+    exposeVal = name
+    shouldOpen = exposeVal !== null && typeof exposeVal === 'object'
+  }
+
+  if (exposeKey !== null) _pending.set(exposeKey, exposeVal)
+
+  return new Promise((resolve, reject) => {
+    const go = (r) => {
+      if (exposeKey !== null) r.context[exposeKey] = exposeVal
+      const done = () => {
+        _removeResume(done)
+        resolve()
+      }
+      _addResume(done)
+      if (shouldOpen && r.context.open) {
+        r.context.open(exposeVal)
+      } else {
+        console.log('[bugbear] breakpoint — call resume() in the REPL to continue')
+      }
+    }
+
+    if (_repl) go(_repl)
+    else _startRepl().then(go).catch(reject)
+  })
+}
+
+function _addResume(fn) {
+  _resumes.push(fn)
+  if (_repl) _repl.context.resume = _doResume
+}
+
+function _removeResume(fn) {
+  const i = _resumes.lastIndexOf(fn)
+  if (i !== -1) _resumes.splice(i, 1)
+  if (_repl) {
+    if (_resumes.length) _repl.context.resume = _doResume
+    else delete _repl.context.resume
+  }
+}
+
+function _doResume() {
+  const fn = _resumes[_resumes.length - 1]
+  if (fn) fn()
+}
+
 function _startRepl() {
-  import('bare-repl')
+  if (_replReady) return _replReady
+  _replReady = import('bare-repl')
     .then(({ start }) => {
       _repl = start()
       for (const [name, value] of _pending) _repl.context[name] = value
+      if (_resumes.length) _repl.context.resume = _doResume
       _setupOpen(_repl.context)
+      return _repl
     })
     .catch((err) => {
       console.error('[bugbear] bare-repl unavailable:', err.message)
+      _replReady = null
+      throw err
     })
+  return _replReady
 }
 
 function _setupOpen(ctx) {
@@ -90,7 +171,36 @@ function _setupOpen(ctx) {
   }
 
   ctx.pwd = function () {
-    console.log('/' + stack.map((f) => f.key).join('/'))
+    return '/' + stack.map((f) => f.key).join('/')
+  }
+
+  ctx.print = function (max) {
+    return bugbear.print(max)
+  }
+
+  ctx.ls = function () {
+    if (!_pending.size) {
+      console.log('(nothing registered — use bugbear.repl(name, value) to expose values)')
+      return []
+    }
+    const result = {}
+    for (const [name, val] of _pending) {
+      const t = val === null ? 'null' : Array.isArray(val) ? `Array(${val.length})` : typeof val
+      result[name] = t
+    }
+    return result
+  }
+
+  ctx.help = function () {
+    console.log(`
+bugbear REPL
+  open(val)        explore an object in the TUI browser
+  pwd()            print current path inside open browser
+  ls()             list values registered with bugbear.repl()
+  resume()         resume paused code (sleep / breakpoint)
+  print(n?)        print last n debug events (all if n omitted)
+  $                currently selected value in open browser
+`)
   }
 
   function _keys(obj) {
