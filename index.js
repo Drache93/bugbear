@@ -227,7 +227,7 @@ function _setupOpen(ctx) {
       // Left column — parent keys (dim, active key highlighted)
       const pi = row + scrollLeft
       let c1 = ''
-      if (parent && parentKeys[pi] !== null) {
+      if (parent && parentKeys[pi] !== undefined) {
         const label = _trunc(parentKeys[pi], w1 - 1)
         c1 =
           pi === parent.sel ? '\x1b[1;34m ' + label + '\x1b[0m' : '\x1b[2;34m ' + label + '\x1b[0m'
@@ -236,7 +236,7 @@ function _setupOpen(ctx) {
       // Middle column — current keys (selection reversed)
       const ci = row + scrollMid
       let c2 = ''
-      if (curKeys[ci] !== null) {
+      if (curKeys[ci] !== undefined) {
         const k = curKeys[ci]
         const v = cur[k]
         const drillable = v !== null && typeof v === 'object'
