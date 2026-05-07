@@ -34,7 +34,6 @@ require('bugbear')
 
 __bugbear.debug({ event: 'peer-added', peers: 4 })
 __bugbear.print()
-
 ```
 
 ## Inspect events
