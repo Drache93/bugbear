@@ -1,0 +1,41 @@
+{
+  "name": "debug-events",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "exports": {
+    "./package": "./package.json",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "package.json",
+    "index.js",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "format": "prettier . --write",
+    "test": "brittle-bare test/index.js",
+    "lint": "prettier . --check && lunte"
+  },
+  "keywords": [
+    "debug",
+    "events",
+    "bare",
+    "repl"
+  ],
+  "author": "Dominic Cassidy",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "bare-repl": "^6.0.2",
+    "z32": "^1.1.0"
+  },
+  "devDependencies": {
+    "brittle": "^3.19.1",
+    "lunte": "^1.8.0",
+    "prettier": "^3.8.3",
+    "prettier-config-holepunch": "^2.0.0"
+  }
+}
