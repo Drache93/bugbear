@@ -9,6 +9,14 @@ bound.error('something went wrong')
 
 __bugbear.print()
 
+const map = new Map()
+map.set('key', 'value')
+map.set('key2', 20)
+
+const set = new Set()
+set.add('value')
+set.add('value2')
+
 // Sample object to explore in the REPL
 const sample = {
   name: 'autobase',
@@ -22,7 +30,9 @@ const sample = {
     key: 'deadbeef',
     indexes: { byAuthor: {}, byDate: {} }
   },
-  stats: { reads: 10, writes: 3 }
+  stats: { reads: 10, writes: 3 },
+  map: map,
+  set: set
 }
 
 __bugbear.repl('sample', sample)

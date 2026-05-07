@@ -63,6 +63,7 @@ function _startRepl() {
 
 function _setupOpen(ctx) {
   let cur = null
+  let _root = null
   let stack = [] // { obj, key, sel }[]
   let sel = 0
   let _active = false
@@ -70,11 +71,20 @@ function _setupOpen(ctx) {
   let _rawHandler = null
   let bufMode = 0 // 0=hex 1=z32 2=raw
   const _BUF_MODES = ['hex', 'z32', 'raw']
+  const _history = new Map()
 
   ctx.open = function (obj) {
-    cur = obj
-    stack = []
-    sel = 0
+    _root = obj
+    if (_history.has(obj)) {
+      const saved = _history.get(obj)
+      cur = saved.cur
+      stack = saved.stack
+      sel = saved.sel
+    } else {
+      cur = obj
+      stack = []
+      sel = 0
+    }
     ctx.$ = _selVal()
     _enter()
   }
@@ -84,14 +94,25 @@ function _setupOpen(ctx) {
   }
 
   function _keys(obj) {
-    return obj !== null && typeof obj === 'object' ? Object.keys(obj) : []
+    if (obj === null || typeof obj !== 'object') return []
+    const keys = new Set(Object.keys(obj))
+    let proto = Object.getPrototypeOf(obj)
+    while (proto && proto !== Object.prototype) {
+      for (const k of Object.getOwnPropertyNames(proto)) {
+        if (k !== 'constructor' && !k.startsWith('_')) keys.add(k)
+      }
+      proto = Object.getPrototypeOf(proto)
+    }
+    return [...keys]
   }
   function _selKey() {
     return _keys(cur)[sel] ?? null
   }
   function _selVal() {
     const k = _selKey()
-    return k !== null ? cur[k] : undefined
+    if (k === null) return undefined
+    const v = cur[k]
+    return typeof v === 'function' ? v.bind(cur) : v
   }
 
   function _drill() {
@@ -129,7 +150,13 @@ function _setupOpen(ctx) {
     _render()
   }
 
+  function _exitToCall() {
+    _exit()
+    _repl._input.emit('data', Buffer.from('$('))
+  }
+
   function _exit() {
+    if (_root !== null) _history.set(_root, { cur, stack: stack.slice(), sel })
     _active = false
     _repl._output.off('resize', _onResize)
     _repl._input.off('data', _rawHandler)
@@ -157,8 +184,12 @@ function _setupOpen(ctx) {
         _render()
       }
     } else if (key.name === 'l' || key.name === 'right' || key.name === 'return') {
-      _drill()
-      _render()
+      if (typeof _selVal() === 'function') {
+        _exitToCall()
+      } else {
+        _drill()
+        _render()
+      }
     } else if (key.name === 'h' || key.name === 'left') {
       _goUp()
       _render()
