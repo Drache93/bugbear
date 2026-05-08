@@ -410,7 +410,10 @@ bugbear REPL
     const pos = total
       ? `${_pagerScroll + 1}-${Math.min(_pagerScroll + contentH, total)}/${total}`
       : '0/0'
-    out += `\x1b[${rows};1H\x1b[7m ` + `${pos}  j:↓  k:↑  c:clear-sel  q:back`.padEnd(cols - 1) + '\x1b[0m'
+    out +=
+      `\x1b[${rows};1H\x1b[7m ` +
+      `${pos}  j:↓  k:↑  c:clear-sel  q:back`.padEnd(cols - 1) +
+      '\x1b[0m'
     _w(out)
   }
 
