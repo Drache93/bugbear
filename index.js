@@ -50,8 +50,33 @@ function bugbear(scope, context) {
     },
     stack(data, ...tags) {
       store('stack', data, true, tags)
-    }
+    },
+    store
   }
+}
+
+bugbear.log = function (scopes, data, ...tags) {
+  if (!Array.isArray(scopes)) scopes = [scopes]
+
+  let list = _list
+  let pathKey = ''
+  for (const scope of scopes) {
+    pathKey = pathKey ? pathKey + '\x00' + scope : scope
+    if (!_scopes.has(pathKey)) {
+      const scopeList = new LabeledList()
+      _scopes.set(pathKey, scopeList)
+      list.push(scope, scopeList)
+    }
+    list = _scopes.get(pathKey)
+  }
+
+  const label = tags.length
+    ? tags.join(' ')
+    : typeof data === 'string'
+      ? data.slice(0, 40)
+      : '[log]'
+  list.push(label, data)
+  if (_rerenderFn) _rerenderFn()
 }
 
 bugbear.print = function (n) {
