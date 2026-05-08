@@ -5,7 +5,7 @@ log.debug({ stuff: true })
 log.stack({ stuffagain: true })
 
 const bound = __bugbear('hello', { stuff: 'my instance' })
-bound.error('something went wrong',{ stuff: 'my instance' })
+bound.error('something went wrong', { stuff: 'my instance' })
 
 __bugbear.print()
 
@@ -16,8 +16,6 @@ map.set('key2', 20)
 const set = new Set()
 set.add('value')
 set.add('value2')
-const events = []
-await __bugbear.breakpoint('sample', sample)
 
 // Sample object to explore in the REPL
 const sample = {
@@ -37,4 +35,4 @@ const sample = {
   set: set
 }
 
-// __bugbear.repl('sample', sample)
+__bugbear.repl('sample', sample)

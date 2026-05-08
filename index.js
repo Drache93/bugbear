@@ -1,14 +1,20 @@
 const z32 = require('z32')
 
 class LabeledList {
-  constructor() { this._items = [] }
-  push(label, value) { this._items.push({ label, value }) }
-  get length() { return this._items.length }
+  constructor() {
+    this._items = []
+  }
+  push(label, value) {
+    this._items.push({ label, value })
+  }
+  get length() {
+    return this._items.length
+  }
 }
 
 const events = []
 const _list = new LabeledList() // root
-const _scopes = new Map()       // scope name → LabeledList
+const _scopes = new Map() // scope name → LabeledList
 let _repl = null
 let _replReady = null
 const _pending = new Map()
@@ -36,9 +42,15 @@ function bugbear(scope, context) {
   }
 
   return {
-    debug(data, ...tags) { store('debug', data, false, tags) },
-    error(data, ...tags) { store('error', data, false, tags) },
-    stack(data, ...tags) { store('stack', data, true, tags) }
+    debug(data, ...tags) {
+      store('debug', data, false, tags)
+    },
+    error(data, ...tags) {
+      store('error', data, false, tags)
+    },
+    stack(data, ...tags) {
+      store('stack', data, true, tags)
+    }
   }
 }
 
@@ -73,7 +85,10 @@ bugbear.sleep = function (ms) {
   return new Promise((resolve) => {
     let timer = null
     const done = () => {
-      if (timer !== null) { clearTimeout(timer); timer = null }
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
       _removeResume(done)
       resolve()
     }
@@ -92,8 +107,13 @@ bugbear.breakpoint = function (name, value) {
   }
 
   return new Promise((resolve, reject) => {
-    const done = () => { _removeResume(done); resolve() }
-    const go = () => { _addResume(done) }
+    const done = () => {
+      _removeResume(done)
+      resolve()
+    }
+    const go = () => {
+      _addResume(done)
+    }
     if (_repl) go()
     else _startRepl().then(go).catch(reject)
   })
@@ -140,13 +160,19 @@ function _startRepl() {
 
 function _setupOpen(ctx) {
   let cur = _list
-  let stack = []
+  const stack = []
   let sel = 0
   let _filter = ''
   let _filterMode = false
+  let _mapPath = ''
+  let _mapMode = false
   let _pagerMode = false
   let _pagerLines = []
   let _pagerScroll = 0
+  const _selections = new Map() // cur → Set of selected keys
+  let _visualMode = false
+  let _visualAnchor = 0
+  let _visualPrevKeys = new Set()
   let _active = false
   let _decoder = null
   let _rawHandler = null
@@ -154,10 +180,16 @@ function _setupOpen(ctx) {
   const _BUF_MODES = ['hex', 'z32', 'raw']
   const _TS_MODES = ['ms', 'utc', 'local']
 
-  _rerenderFn = () => { if (_active && !_pagerMode) _render() }
+  _rerenderFn = () => {
+    if (_active && !_pagerMode) _render()
+  }
 
-  ctx.open = function () { _enter() }
-  ctx.print = function (max) { return bugbear.print(max) }
+  ctx.open = function () {
+    _enter()
+  }
+  ctx.print = function (max) {
+    return bugbear.print(max)
+  }
   ctx.help = function () {
     console.log(`
 bugbear REPL
@@ -165,11 +197,13 @@ bugbear REPL
   resume()         resume paused code
   print(n?)        print last n debug events (all if omitted)
   $                currently selected value in TUI
-  Keys: j/k=↓↑  l/→=drill in  h/←=back  /:filter  p=pager  r=resume  g/G=top/bot  x=enc  q=quit
+  Keys: j/k=↓↑  l/→=drill  h/←=back  s=select  m=map  /:filter  p=pager  r=resume  g/G=top/bot  x=enc  q=quit
 `)
   }
 
-  function _ll(obj) { return obj instanceof LabeledList }
+  function _ll(obj) {
+    return obj instanceof LabeledList
+  }
 
   function _getVal(obj, key) {
     if (_ll(obj)) return obj._items[parseInt(key)]?.value
@@ -200,14 +234,61 @@ bugbear REPL
     const all = _keys(cur)
     if (!_filter) return all
     let re
-    try { re = new RegExp(_filter, 'i') } catch { return all }
-    return all.filter(k => re.test(_getLabel(cur, k)))
+    try {
+      re = new RegExp(_filter, 'i')
+    } catch {
+      return all
+    }
+    return all.filter((k) => re.test(_getLabel(cur, k)))
   }
 
-  function _selKey() { return _visibleKeys()[sel] ?? null }
+  function _resolvePath(val, path) {
+    for (const p of path.split('.')) {
+      if (
+        val === null ||
+        val === undefined ||
+        typeof val !== 'object' ||
+        val instanceof LabeledList
+      ) {
+        return undefined
+      }
+      val = val[p]
+    }
+    return val
+  }
+
+  function _isSelected(key) {
+    return _selections.get(cur)?.has(key) ?? false
+  }
+  function _toggleSelect(key) {
+    if (!_selections.has(cur)) _selections.set(cur, new Set())
+    const s = _selections.get(cur)
+    s.has(key) ? s.delete(key) : s.add(key)
+  }
+  function _applyVisualSelection() {
+    const ks = _visibleKeys()
+    const lo = Math.min(_visualAnchor, sel)
+    const hi = Math.max(_visualAnchor, sel)
+    const newKeys = new Set()
+    for (let i = lo; i <= hi; i++) if (ks[i] !== undefined) newKeys.add(ks[i])
+    if (!_selections.has(cur)) _selections.set(cur, new Set())
+    const s = _selections.get(cur)
+    for (const k of _visualPrevKeys) if (!newKeys.has(k)) s.delete(k)
+    for (const k of newKeys) s.add(k)
+    _visualPrevKeys = newKeys
+  }
+
+  function _selKey() {
+    return _visibleKeys()[sel] ?? null
+  }
   function _selVal() {
     const k = _selKey()
     return k === null ? undefined : _getVal(cur, k)
+  }
+
+  function _exitVisual() {
+    _visualMode = false
+    _visualPrevKeys = new Set()
   }
 
   function _drill() {
@@ -219,6 +300,7 @@ bugbear REPL
     sel = 0
     _filter = ''
     _filterMode = false
+    _exitVisual()
     ctx.$ = _selVal()
   }
 
@@ -229,15 +311,25 @@ bugbear REPL
     sel = prev.sel
     _filter = ''
     _filterMode = false
+    _exitVisual()
     ctx.$ = _selVal()
   }
 
   function _buildPagerLines() {
     const cols = (_repl._columns || 80) - 1
     const lines = []
-    for (const k of _visibleKeys()) {
-      const label = _getLabel(cur, k)
-      const val = _getVal(cur, k)
+
+    // Collect globally selected items across all levels
+    const globalSel = []
+    for (const [obj, keys] of _selections) {
+      for (const k of keys) globalSel.push({ obj, k })
+    }
+
+    const entries = globalSel.length
+      ? globalSel.map(({ obj, k }) => ({ label: _getLabel(obj, k), val: _getVal(obj, k) }))
+      : _visibleKeys().map((k) => ({ label: _getLabel(cur, k), val: _getVal(cur, k) }))
+
+    for (const { label, val } of entries) {
       const fill = '─'.repeat(Math.max(0, cols - label.length - 4))
       lines.push(`\x1b[2m──\x1b[0m \x1b[1;36m${label}\x1b[0m \x1b[2m${fill}\x1b[0m`)
       _appendVal(val, lines, 0)
@@ -258,7 +350,7 @@ bugbear REPL
     } else if (Buffer.isBuffer(val)) {
       lines.push(`${indent}\x1b[33m<Buffer ${val.length}b>\x1b[0m`)
     } else if (typeof val !== 'object') {
-      const s = _isTs(val) ? _fmtTs(val) : (typeof val === 'string' ? val : String(val))
+      const s = _isTs(val) ? _fmtTs(val) : typeof val === 'string' ? val : String(val)
       const color = _colorCode(val)
       for (const line of s.split('\n')) {
         lines.push(`${indent}\x1b[${color}m${line}\x1b[0m`)
@@ -272,11 +364,36 @@ bugbear REPL
           lines.push(`${indent}\x1b[36m${k}\x1b[0m:`)
           _appendVal(v, lines, depth + 1)
         } else {
-          const s = Buffer.isBuffer(v) ? `<Buffer ${v.length}b>` : _isTs(v) ? _fmtTs(v) : typeof v === 'string' ? v : String(v)
+          const s = Buffer.isBuffer(v)
+            ? `<Buffer ${v.length}b>`
+            : _isTs(v)
+              ? _fmtTs(v)
+              : typeof v === 'string'
+                ? v
+                : String(v)
           lines.push(`${indent}\x1b[36m${k}\x1b[0m: \x1b[${_colorCode(v)}m${s}\x1b[0m`)
         }
       }
     }
+  }
+
+  function _truncAnsi(s, maxLen) {
+    let visible = 0
+    let i = 0
+    let result = ''
+    while (i < s.length) {
+      if (s.charCodeAt(i) === 0x1b && s[i + 1] === '[') {
+        const end = s.indexOf('m', i + 2)
+        if (end === -1) break
+        result += s.slice(i, end + 1)
+        i = end + 1
+      } else {
+        if (visible >= maxLen) break
+        result += s[i++]
+        visible++
+      }
+    }
+    return result + '\x1b[0m'
   }
 
   function _renderPager() {
@@ -284,17 +401,23 @@ bugbear REPL
     const rows = _repl._rows || 24
     const contentH = rows - 1
 
-    let out = '\x1b[2J\x1b[H'
+    let out = '\x1b[2J'
     for (let row = 0; row < contentH; row++) {
-      out += (_pagerLines[_pagerScroll + row] ?? '') + '\r\n'
+      // Absolute position + erase line + truncated content — no wrapping possible
+      out += `\x1b[${row + 1};1H\x1b[2K` + _truncAnsi(_pagerLines[_pagerScroll + row] ?? '', cols)
     }
     const total = _pagerLines.length
-    const pos = total ? `${_pagerScroll + 1}-${Math.min(_pagerScroll + contentH, total)}/${total}` : '0/0'
-    out += '\x1b[7m ' + `${pos}  j:↓  k:↑  q:back`.padEnd(cols - 1) + '\x1b[0m'
+    const pos = total
+      ? `${_pagerScroll + 1}-${Math.min(_pagerScroll + contentH, total)}/${total}`
+      : '0/0'
+    out += `\x1b[${rows};1H\x1b[7m ` + `${pos}  j:↓  k:↑  c:clear-sel  q:back`.padEnd(cols - 1) + '\x1b[0m'
     _w(out)
   }
 
-  function _onResize() { _render() }
+  function _onResize() {
+    if (_pagerMode) _renderPager()
+    else _render()
+  }
 
   function _enter() {
     if (_active) return
@@ -333,11 +456,40 @@ bugbear REPL
     if (_pagerMode) {
       const contentH = (_repl._rows || 24) - 1
       if (key.name === 'j' || key.name === 'down') {
-        if (_pagerScroll < _pagerLines.length - contentH) { _pagerScroll++; _renderPager() }
+        if (_pagerScroll < _pagerLines.length - contentH) {
+          _pagerScroll++
+          _renderPager()
+        }
       } else if (key.name === 'k' || key.name === 'up') {
-        if (_pagerScroll > 0) { _pagerScroll--; _renderPager() }
+        if (_pagerScroll > 0) {
+          _pagerScroll--
+          _renderPager()
+        }
+      } else if (key.name === 'c') {
+        _selections.clear()
+        _exitVisual()
+        _pagerMode = false
+        _render()
       } else if (key.name === 'q' || key.name === 'escape' || (key.ctrl && key.name === 'c')) {
         _pagerMode = false
+        _render()
+      }
+      return
+    }
+
+    if (_mapMode) {
+      if (key.name === 'escape') {
+        _mapPath = ''
+        _mapMode = false
+        _render()
+      } else if (key.name === 'return') {
+        _mapMode = false
+        _render()
+      } else if (key.name === 'backspace') {
+        _mapPath = _mapPath.slice(0, -1)
+        _render()
+      } else if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+        _mapPath += key.sequence
         _render()
       }
       return
@@ -369,9 +521,19 @@ bugbear REPL
 
     const ks = _visibleKeys()
     if (key.name === 'j' || key.name === 'down') {
-      if (sel < ks.length - 1) { sel++; ctx.$ = _selVal(); _render() }
+      if (sel < ks.length - 1) {
+        sel++
+        ctx.$ = _selVal()
+        if (_visualMode) _applyVisualSelection()
+        _render()
+      }
     } else if (key.name === 'k' || key.name === 'up') {
-      if (sel > 0) { sel--; ctx.$ = _selVal(); _render() }
+      if (sel > 0) {
+        sel--
+        ctx.$ = _selVal()
+        if (_visualMode) _applyVisualSelection()
+        _render()
+      }
     } else if (key.name === 'l' || key.name === 'right' || key.name === 'return') {
       if (typeof _selVal() === 'function') {
         _exitToCall()
@@ -380,16 +542,54 @@ bugbear REPL
         _render()
       }
     } else if (key.name === 'h' || key.name === 'left' || key.name === 'escape') {
+      if (_visualMode) {
+        _exitVisual()
+        _render()
+        return
+      }
       _goUp()
       _render()
     } else if (key.name === 'g') {
-      sel = 0; ctx.$ = _selVal(); _render()
+      sel = 0
+      ctx.$ = _selVal()
+      _render()
     } else if (key.name === 'G') {
-      sel = Math.max(0, ks.length - 1); ctx.$ = _selVal(); _render()
+      sel = Math.max(0, ks.length - 1)
+      ctx.$ = _selVal()
+      _render()
     } else if (key.name === 'x') {
-      xMode = (xMode + 1) % 3; _render()
+      xMode = (xMode + 1) % 3
+      _render()
     } else if (key.name === 'r') {
-      _doResume(); _render()
+      _doResume()
+      _render()
+    } else if (key.name === 'c') {
+      _selections.clear()
+      _exitVisual()
+      _render()
+    } else if (key.name === 's') {
+      const k = _selKey()
+      if (k !== null) {
+        _toggleSelect(k)
+        const ks = _visibleKeys()
+        if (sel < ks.length - 1) sel++
+        ctx.$ = _selVal()
+        _render()
+      }
+    } else if (key.name === 'v') {
+      if (_visualMode) {
+        _exitVisual()
+        _render()
+      } else {
+        _visualMode = true
+        _visualAnchor = sel
+        _visualPrevKeys = new Set()
+        _applyVisualSelection()
+        _render()
+      }
+    } else if (key.name === 'm') {
+      _mapMode = true
+      _render()
     } else if (key.sequence === '/') {
       _filterMode = true
       _render()
@@ -403,7 +603,9 @@ bugbear REPL
     }
   }
 
-  function _w(s) { _repl._output.write(s) }
+  function _w(s) {
+    _repl._output.write(s)
+  }
 
   function _isTs(n) {
     return typeof n === 'number' && Number.isInteger(n) && n >= 946684800000 && n <= 4102444800000
@@ -417,7 +619,13 @@ bugbear REPL
 
   function _renderBuf(buf) {
     if (xMode === 1) return z32.encode(buf)
-    if (xMode === 2) { try { return buf } catch { return '<invalid utf8>' } }
+    if (xMode === 2) {
+      try {
+        return buf
+      } catch {
+        return '<invalid utf8>'
+      }
+    }
     return buf.toString('hex')
   }
 
@@ -436,7 +644,8 @@ bugbear REPL
 
     const scrollMid = Math.max(0, sel - Math.floor(contentH / 2))
     const scrollLeft = parent ? Math.max(0, parent.sel - Math.floor(contentH / 2)) : 0
-    const preview = _previewLines(_selVal(), w3, contentH)
+    const previewVal = _mapPath ? _resolvePath(_selVal(), _mapPath) : _selVal()
+    const preview = _previewLines(previewVal, w3, contentH)
 
     let out = '\x1b[2J\x1b[H'
 
@@ -448,9 +657,8 @@ bugbear REPL
       let c1 = ''
       if (parent && parentKeys[pi] !== undefined) {
         const label = _trunc(_getLabel(parent.obj, parentKeys[pi]), w1 - 1)
-        c1 = pi === parent.sel
-          ? '\x1b[1;34m ' + label + '\x1b[0m'
-          : '\x1b[2;34m ' + label + '\x1b[0m'
+        c1 =
+          pi === parent.sel ? '\x1b[1;34m ' + label + '\x1b[0m' : '\x1b[2;34m ' + label + '\x1b[0m'
       }
 
       const ci = row + scrollMid
@@ -459,9 +667,20 @@ bugbear REPL
         const k = curKeys[ci]
         const v = _getVal(cur, k)
         const drillable = v !== null && typeof v === 'object'
+        const selected = _isSelected(k)
+        const marker = selected ? '●' : ' '
         const label = _trunc(_getLabel(cur, k), w2 - 2)
         if (ci === sel) {
-          c2 = '\x1b[7m\x1b[1m ' + label.padEnd(w2 - 1) + '\x1b[0m'
+          const mc = selected ? '\x1b[33m' : ''
+          c2 =
+            '\x1b[7m\x1b[1m' +
+            mc +
+            marker +
+            '\x1b[0m\x1b[7m\x1b[1m' +
+            label.padEnd(w2 - 1) +
+            '\x1b[0m'
+        } else if (selected) {
+          c2 = '\x1b[33m' + marker + label + '\x1b[0m'
         } else {
           c2 = drillable ? '\x1b[36m ' + label + '\x1b[0m' : '\x1b[37m ' + label + '\x1b[0m'
         }
@@ -474,17 +693,24 @@ bugbear REPL
     const count = curKeys.length ? `${sel + 1}/${curKeys.length}` : '0/0'
     const sk = _selKey() !== null ? _getLabel(cur, _selKey()) : ''
     const st = _typeName(_selVal())
+    let selCount = 0
+    for (const s of _selections.values()) selCount += s.size
+    const selBadge = selCount ? ` \x1b[0m\x1b[7;33m[${selCount}✓]\x1b[0m\x1b[7m` : ''
+    const mapBadge = _mapPath ? ` \x1b[0m\x1b[7;35m→${_mapPath}\x1b[0m\x1b[7m` : ''
+    const visualBadge = _visualMode ? ` \x1b[0m\x1b[7;32mVISUAL\x1b[0m\x1b[7m` : ''
     let status
-    if (_filterMode) {
+    if (_mapMode) {
+      status = ` m:${_mapPath}█`
+    } else if (_filterMode) {
       status = ` /${_filter}█`
     } else if (_filter) {
       const resume = _resumes.length ? '  r:resume' : ''
-      status = ` ${count}  \x1b[0m\x1b[7;33m/${_filter}\x1b[0m\x1b[7m  ${sk}: ${st}${resume}  ESC:clear  q:quit`
+      status = ` ${count}${selBadge}${visualBadge}${mapBadge}  \x1b[0m\x1b[7;33m/${_filter}\x1b[0m\x1b[7m  ${sk}: ${st}${resume}  ESC:clear  q:quit`
     } else {
       const hint = _resumes.length
-        ? 'j:↓  k:↑  l:→  h:←  /:filter  r:resume  q:quit'
-        : 'j:↓  k:↑  l:→  h:←  /:filter  q:quit'
-      status = ` ${count}  ${sk}: ${st}   ${hint}`
+        ? 'j:↓  k:↑  l:→  h:←  s:sel  v:visual  m:map  /:filter  r:resume  q:quit'
+        : 'j:↓  k:↑  l:→  h:←  s:sel  v:visual  m:map  /:filter  q:quit'
+      status = ` ${count}${selBadge}${visualBadge}${mapBadge}  ${sk}: ${st}   ${hint}`
     }
     out += '\x1b[7m' + _trunc(status, cols).padEnd(cols) + '\x1b[0m'
 
@@ -560,7 +786,9 @@ bugbear REPL
     if (val instanceof LabeledList) return `[…${val.length}]`
     if (val === null) return 'null'
     if (val === undefined) return 'undefined'
-    if (Buffer.isBuffer(val)) return xMode === 2 ? `[…${val.length}b]` : `<${_BUF_MODES[xMode]} ${val.length}b>`
+    if (Buffer.isBuffer(val)) {
+      return xMode === 2 ? `[…${val.length}b]` : `<${_BUF_MODES[xMode]} ${val.length}b>`
+    }
     if (typeof val === 'string') return `"${val}"`
     if (typeof val === 'number') return _isTs(val) ? _fmtTs(val) : String(val)
     if (typeof val === 'boolean') return String(val)
