@@ -363,6 +363,11 @@ bugbear REPL
         if (v !== null && typeof v === 'object' && !Buffer.isBuffer(v)) {
           lines.push(`${indent}\x1b[36m${k}\x1b[0m:`)
           _appendVal(v, lines, depth + 1)
+        } else if (typeof v === 'string' && v.includes('\n')) {
+          lines.push(`${indent}\x1b[36m${k}\x1b[0m:`)
+          for (const line of v.split('\n')) {
+            lines.push(`${indent}  \x1b[32m${line}\x1b[0m`)
+          }
         } else {
           const s = Buffer.isBuffer(v)
             ? `<Buffer ${v.length}b>`
