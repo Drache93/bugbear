@@ -142,6 +142,8 @@ function _setupOpen(ctx) {
   let cur = _list
   let stack = []
   let sel = 0
+  let _filter = ''
+  let _filterMode = false
   let _active = false
   let _decoder = null
   let _rawHandler = null
@@ -159,7 +161,7 @@ bugbear REPL
   resume()         resume paused code
   print(n?)        print last n debug events (all if omitted)
   $                currently selected value in TUI
-  Keys: j/k=↓↑  l/→=drill in  h/←=back  r=resume  g/G=top/bot  x=enc  q=quit
+  Keys: j/k=↓↑  l/→=drill in  h/←=back  /:filter  r=resume  g/G=top/bot  x=enc  q=quit
 `)
   }
 
@@ -190,7 +192,15 @@ bugbear REPL
     return [...keys]
   }
 
-  function _selKey() { return _keys(cur)[sel] ?? null }
+  function _visibleKeys() {
+    const all = _keys(cur)
+    if (!_filter) return all
+    let re
+    try { re = new RegExp(_filter, 'i') } catch { return all }
+    return all.filter(k => re.test(_getLabel(cur, k)))
+  }
+
+  function _selKey() { return _visibleKeys()[sel] ?? null }
   function _selVal() {
     const k = _selKey()
     return k === null ? undefined : _getVal(cur, k)
@@ -203,6 +213,8 @@ bugbear REPL
     stack.push({ obj: cur, key: _getLabel(cur, k), sel })
     cur = val
     sel = 0
+    _filter = ''
+    _filterMode = false
     ctx.$ = _selVal()
   }
 
@@ -211,6 +223,8 @@ bugbear REPL
     const prev = stack.pop()
     cur = prev.obj
     sel = prev.sel
+    _filter = ''
+    _filterMode = false
     ctx.$ = _selVal()
   }
 
@@ -250,7 +264,31 @@ bugbear REPL
   }
 
   function _onKey(key) {
-    const ks = _keys(cur)
+    if (_filterMode) {
+      if (key.name === 'escape') {
+        _filter = ''
+        _filterMode = false
+        sel = 0
+        ctx.$ = _selVal()
+        _render()
+      } else if (key.name === 'return') {
+        _filterMode = false
+        _render()
+      } else if (key.name === 'backspace') {
+        _filter = _filter.slice(0, -1)
+        sel = 0
+        ctx.$ = _selVal()
+        _render()
+      } else if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+        _filter += key.sequence
+        sel = 0
+        ctx.$ = _selVal()
+        _render()
+      }
+      return
+    }
+
+    const ks = _visibleKeys()
     if (key.name === 'j' || key.name === 'down') {
       if (sel < ks.length - 1) { sel++; ctx.$ = _selVal(); _render() }
     } else if (key.name === 'k' || key.name === 'up') {
@@ -273,6 +311,9 @@ bugbear REPL
       bufMode = (bufMode + 1) % 3; _render()
     } else if (key.name === 'r') {
       _doResume(); _render()
+    } else if (key.sequence === '/') {
+      _filterMode = true
+      _render()
     } else if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
       _exit()
     }
@@ -297,7 +338,7 @@ bugbear REPL
 
     const parent = stack.length ? stack[stack.length - 1] : null
     const parentKeys = _keys(parent?.obj)
-    const curKeys = _keys(cur)
+    const curKeys = _visibleKeys()
 
     const scrollMid = Math.max(0, sel - Math.floor(contentH / 2))
     const scrollLeft = parent ? Math.max(0, parent.sel - Math.floor(contentH / 2)) : 0
@@ -339,10 +380,18 @@ bugbear REPL
     const count = curKeys.length ? `${sel + 1}/${curKeys.length}` : '0/0'
     const sk = _selKey() !== null ? _getLabel(cur, _selKey()) : ''
     const st = _typeName(_selVal())
-    const hint = _resumes.length
-      ? 'j:↓  k:↑  l:→  h:←  r:resume  q:quit'
-      : 'j:↓  k:↑  l:→  h:←  q:quit'
-    const status = ` ${count}  ${sk}: ${st}   ${hint}`
+    let status
+    if (_filterMode) {
+      status = ` /${_filter}█`
+    } else if (_filter) {
+      const resume = _resumes.length ? '  r:resume' : ''
+      status = ` ${count}  \x1b[0m\x1b[7;33m/${_filter}\x1b[0m\x1b[7m  ${sk}: ${st}${resume}  ESC:clear  q:quit`
+    } else {
+      const hint = _resumes.length
+        ? 'j:↓  k:↑  l:→  h:←  /:filter  r:resume  q:quit'
+        : 'j:↓  k:↑  l:→  h:←  /:filter  q:quit'
+      status = ` ${count}  ${sk}: ${st}   ${hint}`
+    }
     out += '\x1b[7m' + _trunc(status, cols).padEnd(cols) + '\x1b[0m'
 
     _w(out)
