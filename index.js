@@ -144,13 +144,17 @@ function _setupOpen(ctx) {
   let sel = 0
   let _filter = ''
   let _filterMode = false
+  let _pagerMode = false
+  let _pagerLines = []
+  let _pagerScroll = 0
   let _active = false
   let _decoder = null
   let _rawHandler = null
-  let bufMode = 0
+  let xMode = 0
   const _BUF_MODES = ['hex', 'z32', 'raw']
+  const _TS_MODES = ['ms', 'utc', 'local']
 
-  _rerenderFn = () => { if (_active) _render() }
+  _rerenderFn = () => { if (_active && !_pagerMode) _render() }
 
   ctx.open = function () { _enter() }
   ctx.print = function (max) { return bugbear.print(max) }
@@ -161,7 +165,7 @@ bugbear REPL
   resume()         resume paused code
   print(n?)        print last n debug events (all if omitted)
   $                currently selected value in TUI
-  Keys: j/k=↓↑  l/→=drill in  h/←=back  /:filter  r=resume  g/G=top/bot  x=enc  q=quit
+  Keys: j/k=↓↑  l/→=drill in  h/←=back  /:filter  p=pager  r=resume  g/G=top/bot  x=enc  q=quit
 `)
   }
 
@@ -228,6 +232,68 @@ bugbear REPL
     ctx.$ = _selVal()
   }
 
+  function _buildPagerLines() {
+    const cols = (_repl._columns || 80) - 1
+    const lines = []
+    for (const k of _visibleKeys()) {
+      const label = _getLabel(cur, k)
+      const val = _getVal(cur, k)
+      const fill = '─'.repeat(Math.max(0, cols - label.length - 4))
+      lines.push(`\x1b[2m──\x1b[0m \x1b[1;36m${label}\x1b[0m \x1b[2m${fill}\x1b[0m`)
+      _appendVal(val, lines, 0)
+      lines.push('')
+    }
+    return lines
+  }
+
+  function _appendVal(val, lines, depth) {
+    const indent = '  '.repeat(depth)
+    if (val instanceof LabeledList) {
+      for (const item of val._items) {
+        lines.push(`${indent}\x1b[36m${item.label}\x1b[0m`)
+        _appendVal(item.value, lines, depth + 1)
+      }
+    } else if (val === null || val === undefined) {
+      lines.push(`${indent}\x1b[2m${String(val)}\x1b[0m`)
+    } else if (Buffer.isBuffer(val)) {
+      lines.push(`${indent}\x1b[33m<Buffer ${val.length}b>\x1b[0m`)
+    } else if (typeof val !== 'object') {
+      const s = _isTs(val) ? _fmtTs(val) : (typeof val === 'string' ? val : String(val))
+      const color = _colorCode(val)
+      for (const line of s.split('\n')) {
+        lines.push(`${indent}\x1b[${color}m${line}\x1b[0m`)
+      }
+    } else if (depth > 5) {
+      lines.push(`${indent}\x1b[2m${_shortVal(val)}\x1b[0m`)
+    } else {
+      for (const k of Object.keys(val)) {
+        const v = val[k]
+        if (v !== null && typeof v === 'object' && !Buffer.isBuffer(v)) {
+          lines.push(`${indent}\x1b[36m${k}\x1b[0m:`)
+          _appendVal(v, lines, depth + 1)
+        } else {
+          const s = Buffer.isBuffer(v) ? `<Buffer ${v.length}b>` : _isTs(v) ? _fmtTs(v) : typeof v === 'string' ? v : String(v)
+          lines.push(`${indent}\x1b[36m${k}\x1b[0m: \x1b[${_colorCode(v)}m${s}\x1b[0m`)
+        }
+      }
+    }
+  }
+
+  function _renderPager() {
+    const cols = _repl._columns || 80
+    const rows = _repl._rows || 24
+    const contentH = rows - 1
+
+    let out = '\x1b[2J\x1b[H'
+    for (let row = 0; row < contentH; row++) {
+      out += (_pagerLines[_pagerScroll + row] ?? '') + '\r\n'
+    }
+    const total = _pagerLines.length
+    const pos = total ? `${_pagerScroll + 1}-${Math.min(_pagerScroll + contentH, total)}/${total}` : '0/0'
+    out += '\x1b[7m ' + `${pos}  j:↓  k:↑  q:back`.padEnd(cols - 1) + '\x1b[0m'
+    _w(out)
+  }
+
   function _onResize() { _render() }
 
   function _enter() {
@@ -264,6 +330,19 @@ bugbear REPL
   }
 
   function _onKey(key) {
+    if (_pagerMode) {
+      const contentH = (_repl._rows || 24) - 1
+      if (key.name === 'j' || key.name === 'down') {
+        if (_pagerScroll < _pagerLines.length - contentH) { _pagerScroll++; _renderPager() }
+      } else if (key.name === 'k' || key.name === 'up') {
+        if (_pagerScroll > 0) { _pagerScroll--; _renderPager() }
+      } else if (key.name === 'q' || key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+        _pagerMode = false
+        _render()
+      }
+      return
+    }
+
     if (_filterMode) {
       if (key.name === 'escape') {
         _filter = ''
@@ -308,12 +387,17 @@ bugbear REPL
     } else if (key.name === 'G') {
       sel = Math.max(0, ks.length - 1); ctx.$ = _selVal(); _render()
     } else if (key.name === 'x') {
-      bufMode = (bufMode + 1) % 3; _render()
+      xMode = (xMode + 1) % 3; _render()
     } else if (key.name === 'r') {
       _doResume(); _render()
     } else if (key.sequence === '/') {
       _filterMode = true
       _render()
+    } else if (key.name === 'p') {
+      _pagerLines = _buildPagerLines()
+      _pagerScroll = 0
+      _pagerMode = true
+      _renderPager()
     } else if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
       _exit()
     }
@@ -321,9 +405,19 @@ bugbear REPL
 
   function _w(s) { _repl._output.write(s) }
 
+  function _isTs(n) {
+    return typeof n === 'number' && Number.isInteger(n) && n >= 946684800000 && n <= 4102444800000
+  }
+
+  function _fmtTs(n) {
+    if (xMode === 1) return new Date(n).toISOString()
+    if (xMode === 2) return new Date(n).toLocaleString()
+    return String(n)
+  }
+
   function _renderBuf(buf) {
-    if (bufMode === 1) return z32.encode(buf)
-    if (bufMode === 2) { try { return buf } catch { return '<invalid utf8>' } }
+    if (xMode === 1) return z32.encode(buf)
+    if (xMode === 2) { try { return buf } catch { return '<invalid utf8>' } }
     return buf.toString('hex')
   }
 
@@ -411,16 +505,15 @@ bugbear REPL
       lines.push('\x1b[2m' + String(val) + '\x1b[0m')
     } else if (typeof val === 'function') {
       lines.push('\x1b[35m[Function: ' + (val.name || '(anon)') + ']\x1b[0m')
-    } else if (Buffer.isBuffer(val) && bufMode !== 2) {
+    } else if (Buffer.isBuffer(val) && xMode !== 2) {
       const s = _renderBuf(val)
-      const mode = _BUF_MODES[bufMode]
-      lines.push('\x1b[2m[' + mode + ' ' + val.length + 'b]\x1b[0m')
+      lines.push('\x1b[2m[' + _BUF_MODES[xMode] + ' ' + val.length + 'b]\x1b[0m')
       for (let i = 0; i < s.length && lines.length < maxH; i += width - 1) {
         lines.push('\x1b[33m' + _trunc(s.slice(i), width - 1) + '\x1b[0m')
       }
     } else if (typeof val !== 'object') {
       const color = _colorCode(val)
-      const s = String(val)
+      const s = _isTs(val) ? _fmtTs(val) : String(val)
       for (let i = 0; i < s.length && lines.length < maxH; i += width - 1) {
         lines.push('\x1b[' + color + 'm' + _trunc(s.slice(i), width - 1) + '\x1b[0m')
       }
@@ -455,10 +548,11 @@ bugbear REPL
     if (val instanceof LabeledList) return `Scope(${val.length})`
     if (val === null) return 'null'
     if (val === undefined) return 'undefined'
-    if (Buffer.isBuffer(val)) return `${val.constructor.name}(${val.length}) [${_BUF_MODES[bufMode]}]`
+    if (Buffer.isBuffer(val)) return `${val.constructor.name}(${val.length}) [${_BUF_MODES[xMode]}]`
     if (Array.isArray(val)) return `Array(${val.length})`
     if (typeof val === 'function') return 'Function'
     if (typeof val === 'object') return `Object {${Object.keys(val).length}}`
+    if (_isTs(val)) return `timestamp [${_TS_MODES[xMode]}]`
     return typeof val
   }
 
@@ -466,9 +560,10 @@ bugbear REPL
     if (val instanceof LabeledList) return `[…${val.length}]`
     if (val === null) return 'null'
     if (val === undefined) return 'undefined'
-    if (Buffer.isBuffer(val)) return bufMode === 2 ? `[…${val.length}b]` : `<${_BUF_MODES[bufMode]} ${val.length}b>`
+    if (Buffer.isBuffer(val)) return xMode === 2 ? `[…${val.length}b]` : `<${_BUF_MODES[xMode]} ${val.length}b>`
     if (typeof val === 'string') return `"${val}"`
-    if (typeof val === 'number' || typeof val === 'boolean') return String(val)
+    if (typeof val === 'number') return _isTs(val) ? _fmtTs(val) : String(val)
+    if (typeof val === 'boolean') return String(val)
     if (Array.isArray(val)) return `[…${val.length}]`
     if (typeof val === 'function') return val.name ? `fn ${val.name}` : 'fn'
     return `{…${Object.keys(val).length}}`
