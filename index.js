@@ -1,28 +1,44 @@
 const z32 = require('z32')
 
+class LabeledList {
+  constructor() { this._items = [] }
+  push(label, value) { this._items.push({ label, value }) }
+  get length() { return this._items.length }
+}
+
 const events = []
+const _list = new LabeledList() // root
+const _scopes = new Map()       // scope name → LabeledList
 let _repl = null
 let _replReady = null
 const _pending = new Map()
 const _resumes = []
+let _rerenderFn = null
 
 function bugbear(scope, context) {
-  function store(level, data, captureStack) {
+  if (!_scopes.has(scope)) {
+    const scopeList = new LabeledList()
+    _scopes.set(scope, scopeList)
+    _list.push(scope, scopeList)
+    if (_rerenderFn) _rerenderFn()
+  }
+  const scopeList = _scopes.get(scope)
+
+  function store(level, data, captureStack, tags) {
     const event = { scope, level, data, ts: Date.now() }
+    if (tags && tags.length) event.tags = tags
     if (context !== undefined) event.context = context
     if (captureStack) event.stack = new Error().stack.split('\n').slice(2).join('\n')
     events.push(event)
+    const label = tags && tags.length ? `[${level}] ${tags.join(' ')}` : `[${level}]`
+    scopeList.push(label, event)
+    if (_rerenderFn) _rerenderFn()
   }
+
   return {
-    debug(data) {
-      store('debug', data)
-    },
-    error(data) {
-      store('error', data)
-    },
-    stack(data) {
-      store('stack', data, true)
-    }
+    debug(data, ...tags) { store('debug', data, false, tags) },
+    error(data, ...tags) { store('error', data, false, tags) },
+    stack(data, ...tags) { store('stack', data, true, tags) }
   }
 }
 
@@ -44,8 +60,10 @@ bugbear.print = function (n) {
 
 bugbear.repl = function (name, value) {
   _pending.set(name, value)
+  _list.push(name, value)
   if (_repl) {
     _repl.context[name] = value
+    if (_rerenderFn) _rerenderFn()
   } else {
     _startRepl().catch(() => {})
   }
@@ -55,10 +73,7 @@ bugbear.sleep = function (ms) {
   return new Promise((resolve) => {
     let timer = null
     const done = () => {
-      if (timer !== null) {
-        clearTimeout(timer)
-        timer = null
-      }
+      if (timer !== null) { clearTimeout(timer); timer = null }
       _removeResume(done)
       resolve()
     }
@@ -68,39 +83,18 @@ bugbear.sleep = function (ms) {
 }
 
 bugbear.breakpoint = function (name, value) {
-  let exposeKey = null
-  let exposeVal = undefined
-  let shouldOpen = false
-
-  if (arguments.length === 0) {
-    // pause only
-  } else if (typeof name === 'string') {
-    exposeKey = name
-    exposeVal = value
-  } else {
-    exposeKey = 'it'
-    exposeVal = name
-    shouldOpen = exposeVal !== null && typeof exposeVal === 'object'
+  if (arguments.length >= 1) {
+    const n = typeof name === 'string' ? name : 'it'
+    const v = typeof name === 'string' ? value : name
+    _pending.set(n, v)
+    _list.push(n, v)
+    if (_repl) _repl.context[n] = v
   }
 
-  if (exposeKey !== null) _pending.set(exposeKey, exposeVal)
-
   return new Promise((resolve, reject) => {
-    const go = (r) => {
-      if (exposeKey !== null) r.context[exposeKey] = exposeVal
-      const done = () => {
-        _removeResume(done)
-        resolve()
-      }
-      _addResume(done)
-      if (shouldOpen && r.context.open) {
-        r.context.open(exposeVal)
-      } else {
-        console.log('[bugbear] breakpoint — call resume() in the REPL to continue')
-      }
-    }
-
-    if (_repl) go(_repl)
+    const done = () => { _removeResume(done); resolve() }
+    const go = () => { _addResume(done) }
+    if (_repl) go()
     else _startRepl().then(go).catch(reject)
   })
 }
@@ -108,6 +102,7 @@ bugbear.breakpoint = function (name, value) {
 function _addResume(fn) {
   _resumes.push(fn)
   if (_repl) _repl.context.resume = _doResume
+  if (_rerenderFn) _rerenderFn()
 }
 
 function _removeResume(fn) {
@@ -117,6 +112,7 @@ function _removeResume(fn) {
     if (_resumes.length) _repl.context.resume = _doResume
     else delete _repl.context.resume
   }
+  if (_rerenderFn) _rerenderFn()
 }
 
 function _doResume() {
@@ -143,67 +139,45 @@ function _startRepl() {
 }
 
 function _setupOpen(ctx) {
-  let cur = null
-  let _root = null
-  let stack = [] // { obj, key, sel }[]
+  let cur = _list
+  let stack = []
   let sel = 0
   let _active = false
   let _decoder = null
   let _rawHandler = null
-  let bufMode = 0 // 0=hex 1=z32 2=raw
+  let bufMode = 0
   const _BUF_MODES = ['hex', 'z32', 'raw']
-  const _history = new Map()
 
-  ctx.open = function (obj) {
-    _root = obj
-    if (_history.has(obj)) {
-      const saved = _history.get(obj)
-      cur = saved.cur
-      stack = saved.stack
-      sel = saved.sel
-    } else {
-      cur = obj
-      stack = []
-      sel = 0
-    }
-    ctx.$ = _selVal()
-    _enter()
-  }
+  _rerenderFn = () => { if (_active) _render() }
 
-  ctx.pwd = function () {
-    return '/' + stack.map((f) => f.key).join('/')
-  }
-
-  ctx.print = function (max) {
-    return bugbear.print(max)
-  }
-
-  ctx.ls = function () {
-    if (!_pending.size) {
-      console.log('(nothing registered — use bugbear.repl(name, value) to expose values)')
-      return []
-    }
-    const result = {}
-    for (const [name, val] of _pending) {
-      const t = val === null ? 'null' : Array.isArray(val) ? `Array(${val.length})` : typeof val
-      result[name] = t
-    }
-    return result
-  }
-
+  ctx.open = function () { _enter() }
+  ctx.print = function (max) { return bugbear.print(max) }
   ctx.help = function () {
     console.log(`
 bugbear REPL
-  open(val)        explore an object in the TUI browser
-  pwd()            print current path inside open browser
-  ls()             list values registered with bugbear.repl()
-  resume()         resume paused code (sleep / breakpoint)
-  print(n?)        print last n debug events (all if n omitted)
-  $                currently selected value in open browser
+  open()           re-enter the TUI browser
+  resume()         resume paused code
+  print(n?)        print last n debug events (all if omitted)
+  $                currently selected value in TUI
+  Keys: j/k=↓↑  l/→=drill in  h/←=back  r=resume  g/G=top/bot  x=enc  q=quit
 `)
   }
 
+  function _ll(obj) { return obj instanceof LabeledList }
+
+  function _getVal(obj, key) {
+    if (_ll(obj)) return obj._items[parseInt(key)]?.value
+    const v = obj[key]
+    return typeof v === 'function' ? v.bind(obj) : v
+  }
+
+  function _getLabel(obj, key) {
+    if (_ll(obj)) return obj._items[parseInt(key)]?.label ?? key
+    return key
+  }
+
   function _keys(obj) {
+    if (_ll(obj)) return obj._items.map((_, i) => String(i))
     if (obj === null || typeof obj !== 'object') return []
     const keys = new Set(Object.keys(obj))
     let proto = Object.getPrototypeOf(obj)
@@ -215,20 +189,18 @@ bugbear REPL
     }
     return [...keys]
   }
-  function _selKey() {
-    return _keys(cur)[sel] ?? null
-  }
+
+  function _selKey() { return _keys(cur)[sel] ?? null }
   function _selVal() {
     const k = _selKey()
-    if (k === null) return undefined
-    const v = cur[k]
-    return typeof v === 'function' ? v.bind(cur) : v
+    return k === null ? undefined : _getVal(cur, k)
   }
 
   function _drill() {
-    const val = _selVal()
+    const k = _selKey()
+    const val = _getVal(cur, k)
     if (val === null || typeof val !== 'object') return
-    stack.push({ obj: cur, key: _selKey(), sel })
+    stack.push({ obj: cur, key: _getLabel(cur, k), sel })
     cur = val
     sel = 0
     ctx.$ = _selVal()
@@ -242,13 +214,12 @@ bugbear REPL
     ctx.$ = _selVal()
   }
 
-  function _onResize() {
-    _render()
-  }
+  function _onResize() { _render() }
 
   function _enter() {
     if (_active) return
     _active = true
+    ctx.$ = _selVal()
     _repl._input.off('data', _repl._oninput)
     const KeyDecoder = globalThis.require('bare-ansi-escapes/key-decoder')
     _decoder = new KeyDecoder()
@@ -266,7 +237,6 @@ bugbear REPL
   }
 
   function _exit() {
-    if (_root !== null) _history.set(_root, { cur, stack: stack.slice(), sel })
     _active = false
     _repl._output.off('resize', _onResize)
     _repl._input.off('data', _rawHandler)
@@ -282,17 +252,9 @@ bugbear REPL
   function _onKey(key) {
     const ks = _keys(cur)
     if (key.name === 'j' || key.name === 'down') {
-      if (sel < ks.length - 1) {
-        sel++
-        ctx.$ = _selVal()
-        _render()
-      }
+      if (sel < ks.length - 1) { sel++; ctx.$ = _selVal(); _render() }
     } else if (key.name === 'k' || key.name === 'up') {
-      if (sel > 0) {
-        sel--
-        ctx.$ = _selVal()
-        _render()
-      }
+      if (sel > 0) { sel--; ctx.$ = _selVal(); _render() }
     } else if (key.name === 'l' || key.name === 'right' || key.name === 'return') {
       if (typeof _selVal() === 'function') {
         _exitToCall()
@@ -300,88 +262,69 @@ bugbear REPL
         _drill()
         _render()
       }
-    } else if (key.name === 'h' || key.name === 'left') {
+    } else if (key.name === 'h' || key.name === 'left' || key.name === 'escape') {
       _goUp()
       _render()
     } else if (key.name === 'g') {
-      sel = 0
-      ctx.$ = _selVal()
-      _render()
+      sel = 0; ctx.$ = _selVal(); _render()
     } else if (key.name === 'G') {
-      sel = Math.max(0, ks.length - 1)
-      ctx.$ = _selVal()
-      _render()
-    } else if (key.name === 'escape') {
-      _goUp()
-      _render()
+      sel = Math.max(0, ks.length - 1); ctx.$ = _selVal(); _render()
     } else if (key.name === 'x') {
-      bufMode = (bufMode + 1) % 3
-      _render()
+      bufMode = (bufMode + 1) % 3; _render()
+    } else if (key.name === 'r') {
+      _doResume(); _render()
     } else if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
       _exit()
     }
   }
 
-  function _w(s) {
-    _repl._output.write(s)
-  }
+  function _w(s) { _repl._output.write(s) }
 
   function _renderBuf(buf) {
     if (bufMode === 1) return z32.encode(buf)
-    if (bufMode === 2) {
-      try {
-        return buf
-      } catch {
-        return '<invalid utf8>'
-      }
-    }
-    // hex (default)
+    if (bufMode === 2) { try { return buf } catch { return '<invalid utf8>' } }
     return buf.toString('hex')
   }
 
   function _render() {
     const cols = _repl._columns || 80
     const rows = _repl._rows || 24
-    const contentH = rows - 2 // header row + status row
+    const contentH = rows - 2
 
     const w1 = Math.floor(cols * 0.22)
     const w2 = Math.floor(cols * 0.38)
-    const w3 = cols - w1 - w2 - 2 // 2 for │ separators
+    const w3 = cols - w1 - w2 - 2
 
     const parent = stack.length ? stack[stack.length - 1] : null
     const parentKeys = _keys(parent?.obj)
     const curKeys = _keys(cur)
 
-    // Scroll so selection stays centered
     const scrollMid = Math.max(0, sel - Math.floor(contentH / 2))
     const scrollLeft = parent ? Math.max(0, parent.sel - Math.floor(contentH / 2)) : 0
     const preview = _previewLines(_selVal(), w3, contentH)
 
     let out = '\x1b[2J\x1b[H'
 
-    // ── Header: path ────────────────────────────────────────────────────────
     const pathStr = '/' + stack.map((f) => f.key).join('/')
     out += '\x1b[1;36m ' + _trunc(pathStr, cols - 2) + '\x1b[0m\r\n'
 
-    // ── Content rows ────────────────────────────────────────────────────────
     for (let row = 0; row < contentH; row++) {
-      // Left column — parent keys (dim, active key highlighted)
       const pi = row + scrollLeft
       let c1 = ''
       if (parent && parentKeys[pi] !== undefined) {
-        const label = _trunc(parentKeys[pi], w1 - 1)
-        c1 =
-          pi === parent.sel ? '\x1b[1;34m ' + label + '\x1b[0m' : '\x1b[2;34m ' + label + '\x1b[0m'
+        const label = _trunc(_getLabel(parent.obj, parentKeys[pi]), w1 - 1)
+        c1 = pi === parent.sel
+          ? '\x1b[1;34m ' + label + '\x1b[0m'
+          : '\x1b[2;34m ' + label + '\x1b[0m'
       }
 
-      // Middle column — current keys (selection reversed)
       const ci = row + scrollMid
       let c2 = ''
       if (curKeys[ci] !== undefined) {
         const k = curKeys[ci]
-        const v = cur[k]
+        const v = _getVal(cur, k)
         const drillable = v !== null && typeof v === 'object'
-        const label = _trunc(k, w2 - 2)
+        const label = _trunc(_getLabel(cur, k), w2 - 2)
         if (ci === sel) {
           c2 = '\x1b[7m\x1b[1m ' + label.padEnd(w2 - 1) + '\x1b[0m'
         } else {
@@ -389,27 +332,33 @@ bugbear REPL
         }
       }
 
-      // Right column — preview
       const c3 = preview[row] ?? ''
-
       out += _pad(c1, w1) + '\x1b[2m│\x1b[0m' + _pad(c2, w2) + '\x1b[2m│\x1b[0m ' + c3 + '\r\n'
     }
 
-    // ── Status bar ───────────────────────────────────────────────────────────
     const count = curKeys.length ? `${sel + 1}/${curKeys.length}` : '0/0'
-    const sk = _selKey() ?? ''
+    const sk = _selKey() !== null ? _getLabel(cur, _selKey()) : ''
     const st = _typeName(_selVal())
-    const hint = 'h:up  j:↓  k:↑  l:in  g:top  G:bot  x:enc  q:quit'
+    const hint = _resumes.length
+      ? 'j:↓  k:↑  l:→  h:←  r:resume  q:quit'
+      : 'j:↓  k:↑  l:→  h:←  q:quit'
     const status = ` ${count}  ${sk}: ${st}   ${hint}`
     out += '\x1b[7m' + _trunc(status, cols).padEnd(cols) + '\x1b[0m'
 
     _w(out)
   }
 
-  // ── Preview column ─────────────────────────────────────────────────────────
   function _previewLines(val, width, maxH) {
     const lines = []
-    if (val === null || val === undefined) {
+    if (val instanceof LabeledList) {
+      if (!val._items.length) {
+        lines.push('\x1b[2m(empty)\x1b[0m')
+      } else {
+        for (let i = 0; i < val._items.length && lines.length < maxH; i++) {
+          lines.push('\x1b[36m' + _trunc(val._items[i].label, width - 1) + '\x1b[0m')
+        }
+      }
+    } else if (val === null || val === undefined) {
       lines.push('\x1b[2m' + String(val) + '\x1b[0m')
     } else if (typeof val === 'function') {
       lines.push('\x1b[35m[Function: ' + (val.name || '(anon)') + ']\x1b[0m')
@@ -445,22 +394,19 @@ bugbear REPL
     return lines
   }
 
-  // ── Formatting helpers ────────────────────────────────────────────────────
   function _colorCode(val) {
     if (val === null) return '2'
     if (typeof val === 'string') return '32'
     if (typeof val === 'number') return '33'
-    if (typeof val === 'boolean') return '35'
-    if (typeof val === 'function') return '35'
+    if (typeof val === 'boolean' || typeof val === 'function') return '35'
     return '36'
   }
 
   function _typeName(val) {
+    if (val instanceof LabeledList) return `Scope(${val.length})`
     if (val === null) return 'null'
     if (val === undefined) return 'undefined'
-    if (Buffer.isBuffer(val)) {
-      return `${val.constructor.name}(${val.length}) [${_BUF_MODES[bufMode]}]`
-    }
+    if (Buffer.isBuffer(val)) return `${val.constructor.name}(${val.length}) [${_BUF_MODES[bufMode]}]`
     if (Array.isArray(val)) return `Array(${val.length})`
     if (typeof val === 'function') return 'Function'
     if (typeof val === 'object') return `Object {${Object.keys(val).length}}`
@@ -468,11 +414,10 @@ bugbear REPL
   }
 
   function _shortVal(val) {
+    if (val instanceof LabeledList) return `[…${val.length}]`
     if (val === null) return 'null'
     if (val === undefined) return 'undefined'
-    if (Buffer.isBuffer(val)) {
-      return bufMode === 2 ? `[…${val.length}b]` : `<${_BUF_MODES[bufMode]} ${val.length}b>`
-    }
+    if (Buffer.isBuffer(val)) return bufMode === 2 ? `[…${val.length}b]` : `<${_BUF_MODES[bufMode]} ${val.length}b>`
     if (typeof val === 'string') return `"${val}"`
     if (typeof val === 'number' || typeof val === 'boolean') return String(val)
     if (Array.isArray(val)) return `[…${val.length}]`
@@ -488,6 +433,8 @@ bugbear REPL
   function _trunc(s, width) {
     return s.length <= width ? s : s.slice(0, width - 1) + '…'
   }
+
+  _enter()
 }
 
 if (!globalThis.__bugbear) globalThis.__bugbear = bugbear
