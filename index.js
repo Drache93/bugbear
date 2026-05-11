@@ -27,6 +27,7 @@ function bugbear(scopes, ...rest) {
     }
   }
 
+  // lunte-disable-next-line
   return function log(data, ...tags) {
     const entry = {
       scope: scopes,
