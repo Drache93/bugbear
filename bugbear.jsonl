@@ -1,0 +1,1 @@
+{"scope":["test-scope"],"data":{"x":1},"ts":1778500208644,"stack":"    at file:///Users/odinsson/Dev/pear/debug-events/test/index.js:15:3\n    at Test._run (file:///Users/odinsson/Dev/pear/debug-events/node_modules/brittle/index.js:597:13)"}

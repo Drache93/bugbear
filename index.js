@@ -16,7 +16,13 @@ function bugbear(scopes, ...rest) {
   let file = DEFAULT_FILE
   if (rest.length > 0) {
     const last = rest[rest.length - 1]
-    if (last !== null && typeof last === 'object' && !Array.isArray(last) && !Buffer.isBuffer(last) && typeof last.file === 'string') {
+    if (
+      last !== null &&
+      typeof last === 'object' &&
+      !Array.isArray(last) &&
+      !Buffer.isBuffer(last) &&
+      typeof last.file === 'string'
+    ) {
       file = rest.pop().file
     }
   }

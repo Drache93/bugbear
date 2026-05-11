@@ -9,16 +9,19 @@ Designed for debugging and inspecting, not for production use.
 ## Usage
 
 1. Install bugbear:
+
 ```
 npm install bugbear
 ```
 
 2. Add `bugbear` to your project globally:
+
 ```js
 require('bugbear')
 ```
 
 3. Log events:
+
 ```js
 __bugbear('hyperswarm')({ event: 'peer-added', peers: 4 })
 __bugbear('hyperswarm')({ level: 'error', msg: 'connection refused', code: 111 })
@@ -93,22 +96,22 @@ The three-column layout shows **parent | current | preview**. The current path i
 
 ### Keys
 
-| key                 | action                                   |
-| ------------------- | ---------------------------------------- |
-| `j` / `↓`           | down                                     |
-| `k` / `↑`           | up                                       |
-| `l` / `→` / `enter` | drill in                                 |
-| `h` / `←` / `esc`   | go up                                    |
-| `g`                 | top                                      |
-| `G`                 | bottom                                   |
-| `s`                 | toggle selection on current item         |
-| `v`                 | visual mode — range select               |
-| `c`                 | clear all selections                     |
-| `/`                 | filter — type regex, `enter` to confirm, `esc` to clear |
-| `m`                 | map — type a dot-path to preview a sub-field across all items |
+| key                 | action                                                          |
+| ------------------- | --------------------------------------------------------------- |
+| `j` / `↓`           | down                                                            |
+| `k` / `↑`           | up                                                              |
+| `l` / `→` / `enter` | drill in                                                        |
+| `h` / `←` / `esc`   | go up                                                           |
+| `g`                 | top                                                             |
+| `G`                 | bottom                                                          |
+| `s`                 | toggle selection on current item                                |
+| `v`                 | visual mode — range select                                      |
+| `c`                 | clear all selections                                            |
+| `/`                 | filter — type regex, `enter` to confirm, `esc` to clear         |
+| `m`                 | map — type a dot-path to preview a sub-field across all items   |
 | `p`                 | pager — scrollable expanded view of selected (or current) items |
-| `x`                 | cycle buffer and timestamp encoding: hex → z32 → raw  |
-| `q` / `ctrl+c`      | exit                                     |
+| `x`                 | cycle buffer and timestamp encoding: hex → z32 → raw            |
+| `q` / `ctrl+c`      | exit                                                            |
 
 Filter and map compose: `/\d` to narrow to numeric keys, then `m` + `latency` to show just that field across every item in the preview column.
 
