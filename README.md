@@ -6,21 +6,38 @@ Debug event logger and live navigator for [Bare](https://github.com/holepunchto/
 
 Designed for debugging and inspecting, not for production use.
 
-## Install
+## Usage
 
+1. Install bugbear:
 ```
 npm install bugbear
 ```
 
-## Log events
-
+2. Add `bugbear` to your project globally:
 ```js
-const bugbear = require('bugbear')
-
-const log = bugbear('hyperswarm')
-log({ event: 'peer-added', peers: 4 })
-log({ level: 'error', msg: 'connection refused', code: 111 })
+require('bugbear')
 ```
+
+3. Log events:
+```js
+__bugbear('hyperswarm')({ event: 'peer-added', peers: 4 })
+__bugbear('hyperswarm')({ level: 'error', msg: 'connection refused', code: 111 })
+
+// re-usable logger
+const logs = __bugbear('hyperswarm')
+logs({ event: 'peer-added', peers: 4 })
+logs({ level: 'error', msg: 'connection refused', code: 111 })
+```
+
+4. Run your app and open the resulting JSONL file in the TUI.
+
+```
+node ./app.js && bugbear
+```
+
+![navigator showing three-column layout while browsing sample/peers](example.png)
+
+This will append the log file to `./bugbear.jsonl`, and open it in the TUI.
 
 `bugbear(scope)` returns a scoped logger. Every call captures a stack trace. `level` is optional — include it as a key if you want it.
 
@@ -43,7 +60,7 @@ const log = bugbear('hyperswarm', { file: './debug.jsonl' })
 
 The default file is `./bugbear.jsonl`.
 
-## Global
+### Global
 
 `__bugbear` is available everywhere without passing it around:
 
@@ -74,8 +91,6 @@ The navigator watches the file for new entries and updates live. It works with a
 
 The three-column layout shows **parent | current | preview**. The current path is shown at the top.
 
-![navigator showing three-column layout while browsing sample/peers](example.png)
-
 ### Keys
 
 | key                 | action                                   |
@@ -92,7 +107,7 @@ The three-column layout shows **parent | current | preview**. The current path i
 | `/`                 | filter — type regex, `enter` to confirm, `esc` to clear |
 | `m`                 | map — type a dot-path to preview a sub-field across all items |
 | `p`                 | pager — scrollable expanded view of selected (or current) items |
-| `x`                 | cycle buffer encoding: hex → z32 → raw  |
+| `x`                 | cycle buffer and timestamp encoding: hex → z32 → raw  |
 | `q` / `ctrl+c`      | exit                                     |
 
 Filter and map compose: `/\d` to narrow to numeric keys, then `m` + `latency` to show just that field across every item in the preview column.
