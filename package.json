@@ -3,6 +3,9 @@
   "version": "0.2.0",
   "description": "",
   "main": "index.js",
+  "bin": {
+    "bugbear": "bin.js"
+  },
   "exports": {
     "./package": "./package.json",
     ".": {
@@ -13,8 +16,24 @@
   "files": [
     "package.json",
     "index.js",
-    "index.d.ts"
+    "index.d.ts",
+    "bin.js",
+    "lib/"
   ],
+  "imports": {
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
+    "path": {
+      "bare": "bare-path",
+      "default": "path"
+    },
+    "process": {
+      "bare": "bare-process",
+      "default": "process"
+    }
+  },
   "scripts": {
     "format": "prettier . --write",
     "test": "brittle-bare test/index.js",
@@ -23,13 +42,15 @@
   "keywords": [
     "debug",
     "events",
-    "bare",
-    "repl"
+    "bare"
   ],
   "author": "Dominic Cassidy",
   "license": "Apache-2.0",
   "dependencies": {
-    "bare-repl": "^6.0.2",
+    "bare-fs": "^4.7.1",
+    "bare-path": "^3.0.0",
+    "bare-process": "^4.4.1",
+    "paparam": "^1.10.1",
     "z32": "^1.1.0"
   },
   "devDependencies": {
