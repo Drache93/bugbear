@@ -52,6 +52,10 @@ require('bugbear')
 
 const log = __bugbear('hyperswarm')
 log({ event: 'peer-added', peers: 4 })
+
+// or
+
+__bugbear('hyperswarm')({ event: 'peer-added', peers: 4 })
 ```
 
 bugbear registers itself at `globalThis.__bugbear` — one instance shared across every module, no matter how many times it's required.
