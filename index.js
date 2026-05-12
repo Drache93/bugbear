@@ -10,6 +10,11 @@ function _fd(file) {
   return _fds.get(file)
 }
 
+function encodeTag(tag) {
+  if (Buffer.isBuffer(tag)) return tag.toString('hex')
+  return tag.toString()
+}
+
 function bugbear(scopes, ...rest) {
   if (!Array.isArray(scopes)) scopes = [scopes]
 
@@ -35,9 +40,13 @@ function bugbear(scopes, ...rest) {
       ts: Date.now(),
       stack: new Error().stack.split('\n').slice(2).join('\n')
     }
-    if (tags.length) entry.tags = tags.map(encode)
+    if (tags.length) entry.tags = tags.map(encodeTag)
     fs.writeSync(_fd(file), JSON.stringify(entry) + '\n')
   }
+}
+
+bugbear.log = function log(scope, data, ...tags) {
+  bugbear(scope)(data, ...tags)
 }
 
 if (!globalThis.__bugbear) globalThis.__bugbear = bugbear
