@@ -45,6 +45,7 @@ function bugbear(scopes, ...rest) {
   }
 }
 
+// lunte-disable-next-line
 bugbear.log = function log(scope, data, ...tags) {
   bugbear(scope)(data, ...tags)
 }
