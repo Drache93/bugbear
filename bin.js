@@ -30,15 +30,16 @@ let offset = 0
 
 function addEntry(entry) {
   const scopes = Array.isArray(entry.scope) ? entry.scope : [entry.scope]
+  const tags = entry.tags || []
 
   let list = root
   let pathKey = ''
-  for (const scope of scopes) {
-    pathKey = pathKey ? pathKey + '\x00' + scope : scope
+  for (const segment of [...scopes, ...tags]) {
+    pathKey = pathKey ? pathKey + '\x00' + segment : segment
     if (!scopeMap.has(pathKey)) {
       const scopeList = new LabeledList()
       scopeMap.set(pathKey, scopeList)
-      list.push(scope, scopeList)
+      list.push(segment, scopeList)
     }
     list = scopeMap.get(pathKey)
   }
@@ -48,8 +49,7 @@ function addEntry(entry) {
     data: decode(entry.data),
     tags: entry.tags ? entry.tags.map(decode) : undefined
   }
-  const label = entry.tags?.length ? entry.tags.join(' ') : '[log]'
-  list.push(label, decoded)
+  list.push('[log]', decoded)
 }
 
 function loadNew() {
